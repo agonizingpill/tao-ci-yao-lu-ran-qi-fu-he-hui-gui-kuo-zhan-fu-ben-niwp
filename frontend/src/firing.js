@@ -2,7 +2,9 @@ import {phase, state} from './state.js';
 import {amount, clock, date, empty, esc, field, heatBand, localInput, table, ticket} from './ui.js';
 
 function intake(batch) {
-  const canRecord = state.session.user.role === 'operator' && !batch.runs.length;
+  const frozen = batch.runs.length > 0;
+  const canRecord = state.session.user.role === 'operator' && !frozen;
+  const canCorrect = state.session.user.role === 'operator' && frozen && batch.status !== 'confirmed';
   const unused = Object.keys(phase).filter(key => !batch.curves.some(curve => curve.phase === key));
   const start = localInput(batch.opened_at);
   const end = localInput(batch.closed_at);
@@ -26,6 +28,14 @@ function intake(batch) {
       ${field('累计读数 m³','reading_m3','type="number" min="0" step="0.001"')}
       ${field('仪表编号','meter_serial',`value="${esc(batch.meters[0]?.meter_serial || '')}" maxlength="80"`)}
       ${field('燃气来源文件','source_file',`value="${esc(batch.code)}-GAS.csv" maxlength="80"`)}<button>保存抄表</button></form></details>` : ''}
+    ${canCorrect ? `<details class="edit"><summary>更正抄表源数据</summary>
+      <p class="muted">更正会推进源数据版本，已出的区间判定立即失效，须重新试算。</p>
+      <form data-action="meters/correction" class="form-grid">
+        ${field('抄表时间','sampled_at',`type="datetime-local" min="${start}" max="${end}"`)}
+        ${field('累计读数 m³','reading_m3','type="number" min="0" step="0.001"')}
+        ${field('仪表编号','meter_serial',`value="${esc(batch.meters[0]?.meter_serial || '')}" maxlength="80"`)}
+        ${field('燃气来源文件','source_file',`value="${esc(batch.code)}-GAS.csv" maxlength="80"`)}
+        ${field('更正原因','reason','minlength="4" maxlength="400"')}<button>登记更正</button></form></details>` : ''}
     </section></div></section>`;
 }
 

@@ -8,12 +8,14 @@ from redis import RedisError
 
 from .infra import audit, connect, queue
 from .regression import estimate
+from .verdicts import ensure_schema
 
 HEARTBEAT = Path('/tmp/kiln-heartbeat')
 logging.basicConfig(level=logging.INFO)
 
 
 def process_next(preferred_id=None):
+    ensure_schema()
     with connect() as conn:
         pending = conn.execute("""SELECT r.id FROM load_runs r JOIN firing_batches b ON b.code=r.batch_code
             WHERE r.status='queued' ORDER BY CASE WHEN r.id=%s THEN 0 ELSE 1 END, r.id
@@ -29,14 +31,20 @@ def process_next(preferred_id=None):
                          (type(exc).__name__, run['id']))
             audit(conn, run['batch_code'], 'worker', 'load_failed', run_id=run['id'], kind=type(exc).__name__)
         else:
-            conn.execute("UPDATE load_runs SET status='ready',result=%s,attempts=attempts+1 WHERE id=%s",
-                         (Jsonb(result), run['id']))
-            conn.execute("UPDATE firing_batches SET status='analyzed' WHERE code=%s AND status<>'confirmed'", (run['batch_code'],))
+            conn.execute("UPDATE load_runs SET status='ready',result=%s,verdict=%s,attempts=attempts+1 WHERE id=%s",
+                         (Jsonb(result), result['verdict'], run['id']))
+            conn.execute("""UPDATE firing_batches SET status='analyzed'
+                            WHERE code=%s AND status<>'confirmed' AND source_revision=%s""",
+                         (run['batch_code'], run['source_revision']))
             audit(conn, run['batch_code'], 'worker', 'load_ready', run_id=run['id'], delta_m3=result['delta_m3'])
         return True
 
 
 def work_forever():
+    try:
+        ensure_schema()
+    except Error:
+        logging.exception('Verdict schema bootstrap deferred')
     redis = queue()
     while True:
         HEARTBEAT.touch()

@@ -41,12 +41,16 @@ def raw_readings(conn, code):
 
 
 def dossier(conn, code):
+    from .verdicts import annotate, ensure_schema
+    ensure_schema()
     batch = batch_row(conn, code)
     curves, samples = raw_readings(conn, code)
+    runs = conn.execute('''SELECT id,batch_code,status,input_hash,result,error,attempts,created_at,
+                                  input_snapshot,source_revision,verdict
+                           FROM load_runs WHERE batch_code=%s ORDER BY id DESC''', (code,)).fetchall()
     return {**batch, 'curves': curves, 'meters': samples,
             'recipes': conn.execute('SELECT * FROM recipe_changes WHERE batch_code=%s ORDER BY version DESC', (code,)).fetchall(),
-            'runs': conn.execute('''SELECT id,batch_code,status,input_hash,result,error,attempts,created_at,input_snapshot
-                                    FROM load_runs WHERE batch_code=%s ORDER BY id DESC''', (code,)).fetchall(),
+            'runs': annotate(conn, batch, runs),
             'review': conn.execute('SELECT * FROM cycle_reviews WHERE batch_code=%s', (code,)).fetchone(),
             'audit': conn.execute('SELECT * FROM ledger_audit WHERE batch_code=%s ORDER BY id DESC LIMIT 60', (code,)).fetchall()}
 
@@ -129,13 +133,17 @@ def request_load(conn, code, actor):
                                                                       'opened_at', 'closed_at', 'planned_minutes')},
                                  'curve': curves, 'meter': samples, 'model_revision': 'en-20261121'})
     digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(',', ':')).encode()).hexdigest()
-    row = conn.execute('''INSERT INTO load_runs(batch_code,input_hash,input_snapshot,requested_by) VALUES (%s,%s,%s,%s)
-        ON CONFLICT DO NOTHING RETURNING id,status,input_hash''', (code, digest, Jsonb(snapshot), actor)).fetchone()
+    row = conn.execute('''INSERT INTO load_runs(batch_code,input_hash,input_snapshot,requested_by,source_revision)
+        VALUES (%s,%s,%s,%s,%s) ON CONFLICT(batch_code,input_hash,source_revision)
+        DO NOTHING RETURNING id,status,input_hash,source_revision''',
+        (code, digest, Jsonb(snapshot), actor, batch['source_revision'])).fetchone()
     if row:
-        audit(conn, code, actor, 'load_queued', run_id=row['id'], input_hash=digest)
+        audit(conn, code, actor, 'load_queued', run_id=row['id'], input_hash=digest,
+              source_revision=batch['source_revision'])
         return row
-    return conn.execute('SELECT id,status,input_hash FROM load_runs WHERE batch_code=%s AND input_hash=%s',
-                        (code, digest)).fetchone()
+    return conn.execute('''SELECT id,status,input_hash,source_revision FROM load_runs
+                           WHERE batch_code=%s AND input_hash=%s AND source_revision=%s''',
+                        (code, digest, batch['source_revision'])).fetchone()
 
 
 def retry_load(conn, code, run_id, actor):

@@ -19,7 +19,9 @@ def seed():
         ]:
             start = datetime(2026, 11, day, 6, tzinfo=SHOP_TZ)
             end = start + timedelta(hours=8)
-            added = conn.execute('''INSERT INTO firing_batches VALUES (%s,%s,'釉面砖 Y17',3,%s,%s,%s,480,%s,'firing')
+            added = conn.execute('''INSERT INTO firing_batches
+                (code,kiln,recipe,baseline_version,batch_kg,opened_at,closed_at,planned_minutes,status,created_by)
+                VALUES (%s,%s,'釉面砖 Y17',3,%s,%s,%s,480,%s,'firing')
                 ON CONFLICT DO NOTHING RETURNING code''', (code, kiln, mass, start, end,
                                                             'scheduled' if completeness == 'scheduled' else 'recording')).fetchone()
             if not added or completeness == 'scheduled':

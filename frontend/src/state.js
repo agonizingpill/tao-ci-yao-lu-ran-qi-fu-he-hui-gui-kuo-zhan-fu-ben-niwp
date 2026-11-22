@@ -2,6 +2,7 @@ export const role = {operator: '烧成班长', supervisor: '工艺主管', viewe
 export const phase = {ramp: '升温', soak: '保温', cool: '冷却'};
 export const batchStatus = {scheduled: '已排程', recording: '采集中', analyzed: '已试算', confirmed: '周期已确认'};
 export const recipeStatus = {pending: '待审批', approved: '已批准', rejected: '已退回'};
+export const verdictLabel = {within: '区间内', outside: '超出区间', indeterminate: '不可判'};
 export const accounts = {operator: 'firing', supervisor: 'chief', viewer: 'energy'};
 export const state = {session: JSON.parse(sessionStorage.getItem('kiln.session') || 'null'), batches: [], batch: null, code: sessionStorage.getItem('kiln.code')};
 
@@ -32,7 +33,10 @@ export const createBatch = (form) => request('/batches', 'POST', form);
 export async function refresh(code=state.code) {
   const batches = await request('/batches');
   const selected = batches.some((batch) => batch.code === code) ? code : batches[0]?.code;
-  const batch = selected ? await request(`/batches/${encodeURIComponent(selected)}`) : null;
-  Object.assign(state, {batches, batch, code: selected});
+  const [batch, verdicts] = await Promise.all([
+    selected ? request(`/batches/${encodeURIComponent(selected)}`) : null,
+    request('/verdicts'),
+  ]);
+  Object.assign(state, {batches, batch, verdicts, code: selected});
   if (selected) sessionStorage.setItem('kiln.code', selected);
 }

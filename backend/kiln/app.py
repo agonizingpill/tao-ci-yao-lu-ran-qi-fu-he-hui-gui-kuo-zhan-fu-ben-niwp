@@ -1,14 +1,26 @@
+from contextlib import asynccontextmanager
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from psycopg import OperationalError
 
 from .operations_evidence import router as operations_evidence
-from . import ledger, reviews, schemas as forms
+from . import ledger, reviews, schemas as forms, verdicts
 from .infra import allow, audit, connect, identity, publish_run, queue, token, verify_password
 
-app = FastAPI(title='陶瓷窑炉燃气负荷回归')
+
+@asynccontextmanager
+async def lifespan(_app):
+    try:
+        verdicts.ensure_schema()
+    except OperationalError:
+        pass  # Migrations also carry the DDL; retry lazily on first verdict request.
+    yield
+
+
+app = FastAPI(title='陶瓷窑炉燃气负荷回归', lifespan=lifespan)
 app.include_router(operations_evidence)
 operator = allow('operator')
 supervisor = allow('supervisor')
@@ -82,6 +94,28 @@ def detail(code: str, user=Depends(identity)):
 @app.post('/batches', status_code=201)
 def schedule(form: forms.Batch, actor=Depends(operator)):
     return mutate(lambda conn: ledger.create_batch(conn, form, actor), form.code, actor)
+
+
+@app.get('/verdicts')
+def verdict_overview(user=Depends(identity)):
+    verdicts.ensure_schema()
+    with connect() as conn:
+        return verdicts.list_verdicts(conn)
+
+
+@app.post('/batches/{code}/meters/correction', status_code=201)
+def correct_meter(code: str, form: forms.MeterCorrection, actor=Depends(operator)):
+    return mutate(lambda conn: verdicts.correct_meter(conn, code, form, actor), code, actor)
+
+
+@app.post('/batches/{code}/runs/{run_id}/conclusion', status_code=201)
+def check_conclusion(code: str, run_id: int, form: forms.CheckConclusion, actor=Depends(operator)):
+    return mutate(lambda conn: verdicts.register_conclusion(conn, code, run_id, form, actor), code, actor)
+
+
+@app.post('/batches/{code}/runs/{run_id}/signoff', status_code=201)
+def sign_verdict(code: str, run_id: int, form: forms.VerdictSignoff, actor=Depends(supervisor)):
+    return mutate(lambda conn: verdicts.sign_off(conn, code, run_id, form, actor), code, actor)
 
 
 @app.post('/batches/{code}/curve', status_code=201)

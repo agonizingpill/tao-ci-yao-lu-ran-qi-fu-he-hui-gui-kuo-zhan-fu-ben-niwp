@@ -3,8 +3,10 @@ import {badge, date, empty, esc, field, table, ticket} from './ui.js';
 import {readingTrace} from './firing.js';
 
 const events = {firing_scheduled:'登记排程', curve_recorded:'登记温区', curve_withdrawn:'撤销温区', meter_recorded:'登记抄表',
-  load_queued:'提交试算', load_ready:'试算完成', load_failed:'试算失败', load_requeued:'重试试算', recipe_proposed:'提报配方',
-  recipe_approved:'批准配方', recipe_rejected:'退回配方', cycle_proposed:'提出节拍方案', cycle_confirmed:'确认周期', rule_blocked:'规则拦截'};
+  meter_corrected:'更正抄表', meter_supplemented:'补登抄表', load_queued:'提交试算', load_ready:'试算完成', load_failed:'试算失败',
+  load_requeued:'重试试算', recipe_proposed:'提报配方', recipe_approved:'批准配方', recipe_rejected:'退回配方',
+  cycle_proposed:'提出节拍方案', cycle_confirmed:'确认周期', rule_blocked:'规则拦截',
+  check_conclusion_registered:'登记核查结论', verdict_signed:'签核区间判定'};
 
 function recipeDesk(batch, operator, supervisor, closed) {
   return `<section class="board"><h3>配方变更</h3>${batch.recipes.map(change => `<article class="recipe-line"><div><b>V${change.version}</b> ${badge(change.status,recipeStatus[change.status])}</div>
@@ -17,9 +19,11 @@ function recipeDesk(batch, operator, supervisor, closed) {
 
 function confirmationDesk(batch, run, operator, supervisor, closed) {
   const plan = batch.review;
+  const verdictSigned = Boolean(run?.signoff_valid);
   return `<section class="board"><h3>下一周期节拍</h3>${plan ? `<div class="plan"><div><strong>${plan.next_minutes}</strong> 分钟 <span>原节拍 ${batch.planned_minutes} 分钟</span></div>
       <p>${esc(plan.rationale)}</p><small>${plan.attribution === 'recipe' ? '关联获批配方' : '只记录观测差异'} · 试算 #${plan.run_id} · 提报 ${esc(plan.proposed_by)}</small>
       ${plan.confirmed_by ? `<p class="confirmed-by">${esc(plan.confirmed_by)} 已确认 · ${date(plan.confirmed_at)}</p>` : ''}</div>` : empty('试算完成后，烧成班长可提出下一周期节拍。')}
+    ${run && !closed && !verdictSigned ? `<p class="warn">须先在负荷分析页签核试算 #${run.id} 的参考区间判定，周期才可确认。</p>` : ''}
     ${operator && run && !closed ? `<form data-action="review" class="review-form">
       <input type="hidden" name="run_id" value="${run.id}"><div class="form-grid">
       ${field('新节拍 分钟','next_minutes',`type="number" min="30" max="1440" value="${plan?.next_minutes || batch.planned_minutes}"`)}

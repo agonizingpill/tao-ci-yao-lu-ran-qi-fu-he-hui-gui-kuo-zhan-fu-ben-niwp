@@ -73,3 +73,19 @@ class ReviewPlan(BaseModel):
     next_minutes: int = Field(ge=30, le=1440)
     attribution: Literal['observed', 'recipe']
     rationale: Reason
+
+
+class CheckConclusion(BaseModel):
+    note: Reason
+
+
+class VerdictSignoff(BaseModel):
+    note: Annotated[str, StringConstraints(strip_whitespace=True, max_length=400)] = ''
+
+
+class MeterCorrection(BaseModel):
+    sampled_at: AwareDatetime
+    meter_serial: Label
+    reading_m3: Decimal = Field(ge=0, max_digits=13, decimal_places=3)
+    source_file: Label
+    reason: Reason

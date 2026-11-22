@@ -55,16 +55,25 @@ def propose_cycle(conn, code, form, actor):
 
 
 def confirm_cycle(conn, code, actor):
+    from .verdicts import INVALIDATED, conclusion_for, signoff_for
     batch = batch_row(conn, code, lock=True)
     require(batch['status'] == BatchStatus.analyzed, 'CYCLE_NOT_CONFIRMABLE', '该周期暂不可确认')
     review = conn.execute('SELECT * FROM cycle_reviews WHERE batch_code=%s', (code,)).fetchone()
     require(review and review['proposed_by'] != actor, 'INDEPENDENT_CONFIRMATION', '节拍方案需要由另一位主管确认')
     run = conn.execute('SELECT * FROM load_runs WHERE id=%s', (review['run_id'],)).fetchone()
+    require(run and run['source_revision'] == batch['source_revision'], 'SOURCE_UPDATED', INVALIDATED)
+    signoff = signoff_for(conn, code, run['id'])
+    require(signoff, 'VERDICT_NOT_SIGNED', '请先签核该试算的燃气参考区间判定')
+    if signoff['verdict'] == 'outside':
+        conclusion = conclusion_for(conn, code, run['id'])
+        require(conclusion and conclusion['id'] == signoff['conclusion_id'],
+                'CONCLUSION_REQUIRED', '超出参考区间，请先登记核查结论')
     change_id = review_recipe(conn, code, run, review['attribution'])
     require(change_id == review['recipe_change_id'], 'RECIPE_REVISION_CHANGED', '配方版本已变化，请重提节拍方案')
     row = conn.execute('''UPDATE cycle_reviews SET confirmed_by=%s,confirmed_at=now()
                            WHERE batch_code=%s RETURNING *''', (actor, code)).fetchone()
     conn.execute("UPDATE firing_batches SET status='confirmed' WHERE code=%s", (code,))
     audit(conn, code, actor, 'cycle_confirmed', run_id=run['id'], input_hash=run['input_hash'],
-          change_id=change_id, minutes=row['next_minutes'])
+          change_id=change_id, minutes=row['next_minutes'], verdict=signoff['verdict'],
+          signoff_id=signoff['id'])
     return row
